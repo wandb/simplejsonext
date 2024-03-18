@@ -35,19 +35,31 @@ const (
 	endGroupSym
 )
 
+var (
+	errUnexpectedComma = errors.New("simple json: unexpected comma")
+	errUnexpectedEnd   = errors.New("simple json: unexpected end of array or object")
+	errLineNotEmpty    = errors.New("simple json: non-whitespace found before newline")
+	errBufferNotEmpty  = errors.New("simple json: remainder of buffer not empty")
+	errControlChar     = errors.New("simple json: control character, tab, or newline in string value")
+	errTruncatedHex    = errors.New(
+		"simple json: expected a unicode hexadecimal codepoint but json is truncated",
+	)
+	errMaxDepth = errors.New("simple json: maximum nesting depth exceeded")
+)
+
 type Parser interface {
 	// Parse JSON from the front of the contained data as a simply-typed value
 	// and return it. If the data is empty, the exact error io.EOF will be
 	// returned.
 	Parse() (any, error)
-	// Consume whitespace up to the next newline, returning an error if
-	// something other than whitespace exists before the next newline, or
+	// NextLine consumes whitespace up to the next newline, returning an error
+	// if something other than whitespace exists before the next newline, or
 	// returning the exact error io.EOF if the end of data is found first. This
 	// method reads until exactly the next '\n' newline character, not any other
 	// combination of '\r' and '\n'; it will work with "\r\n" and "\n" newlines
 	// only.
 	NextLine() error
-	// Range-func iterable for reading JSONL.
+	// IterLines returns a Range-func iterable for reading JSONL.
 	//
 	// Returns an iterable go1.22+ RangeFunc that yields each line of a JSONL
 	// until the end of data. If an error occurs, it will be yielded on its own
@@ -55,13 +67,13 @@ type Parser interface {
 	//
 	// See: https://go.dev/wiki/RangefuncExperiment
 	IterLines() func(func(any, error) bool)
-	// Check that the remaining data is all whitespace, returning an error if
-	// not.
+	// CheckEmpty checks that the remaining data is all whitespace, returning an
+	// error if not.
 	CheckEmpty() error
-	// Parse JSON from the front of the contained data, then checks if there is
-	// any data left after. If there is, the value will still be returned but
-	// there will be a "not empty" error. If the data is empty, the exact error
-	// io.EOF will be returned.
+	// UnmarshalFull parses JSON from the front of the contained data, then
+	// checks if there is any data left after. If there is, the value will still
+	// be returned but there will be a "not empty" error. If the data is empty,
+	// the exact error io.EOF will be returned.
 	UnmarshalFull() (any, error)
 	// Reset the parser with a new io.Reader.
 	Reset(io.Reader)
@@ -79,14 +91,17 @@ type parser struct {
 	size    int          // position after the last byte written in readBuf
 }
 
+// NewParser creates a new parser that parses the given reader.
 func NewParser(r io.Reader) Parser {
 	return &parser{readBuf: make([]byte, readBufferSize), reader: r}
 }
 
+// NewParserFromSlice creates a new parser for the given slice.
 func NewParserFromSlice(data []byte) Parser {
 	return &parser{readBuf: data, size: len(data)}
 }
 
+// NewParserFromString creates a new parser for the given string.
 func NewParserFromString(data string) Parser {
 	// We unsafe-cast the string to a byte slice because we are confident that
 	// nothing in our call stack will ever modify the referenced bytes.
@@ -163,8 +178,8 @@ var numberCharTable = [256]byte{
 	'9': integralNumber,
 	'.': floatNumber,
 	'-': integralNumber,
-	'+': integralNumber, // TODO(kent): make this float
-	'e': floatNumber,    // exponent
+	'+': floatNumber,
+	'e': floatNumber, // exponent
 	'E': floatNumber,
 	'I': floatNumber, // Infinity
 	'n': floatNumber,
@@ -388,7 +403,7 @@ func (p *parser) parseString() (v []byte, err error) {
 			p.rewind(len(chunk) - pos - 1)
 			break
 		} else if b < ' ' {
-			return nil, errors.New("simple json: control character, tab, or newline in string value")
+			return nil, errControlChar
 		}
 	}
 
@@ -412,7 +427,7 @@ ReadingChunks:
 	ReadingBytes:
 		for pos, b := range chunk {
 			if b < ' ' {
-				return nil, errors.New("simple json: control character, tab, or newline in string value")
+				return nil, errControlChar
 			} else if escaped {
 				escaped = false
 				if b == 'u' {
@@ -423,9 +438,7 @@ ReadingChunks:
 					var hexCode [4]byte
 					err = p.read(hexCode[:])
 					if err != nil {
-						return nil, errors.New(
-							"simple json: expected a unicode hexadecimal codepoint but json is truncated",
-						)
+						return nil, errTruncatedHex
 					}
 					thisRune, err := parseHexToRune(hexCode)
 					if err != nil {
@@ -545,9 +558,8 @@ func (p *parser) Parse() (val any, err error) {
 
 func (p *parser) doParse(remainingDepth int) (val any, err error) {
 	if remainingDepth < 0 {
-		return nil, errors.New("simple json: maximum nesting depth exceeded")
+		return nil, errMaxDepth
 	}
-	// TODO(kent): i think we have to frontload the ty into the recursive parsing func again
 	var ty valType
 	ty, err = p.parseType()
 	if err != nil {
@@ -589,7 +601,7 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 			} else if len(arr) == 0 {
 				if ty == commaSym {
 					// Found a comma with no previous value
-					return nil, errors.New("simple json: unexpected comma") // TODO(kent): better error
+					return nil, errUnexpectedComma
 				}
 			} else {
 				// We just read a value and the array hasn't ended. We MUST find
@@ -634,7 +646,7 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 			} else if obj == nil {
 				if ty == commaSym {
 					// Found a comma with no previous value
-					return nil, errors.New("simple json: unexpected comma") // TODO(kent): better error
+					return nil, errUnexpectedComma
 				}
 				// Initialize the object's map
 				obj = make(map[string]any)
@@ -673,8 +685,12 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 			obj[objKey] = objVal
 		}
 		val = obj
-	case unknownTy, commaSym, endGroupSym:
-		return nil, errors.New("invalid") // TODO(kent): better error
+	case commaSym:
+		return nil, errUnexpectedComma
+	case endGroupSym:
+		return nil, errUnexpectedEnd
+	case unknownTy:
+		panic("unreachable")
 	}
 	if err != nil {
 		val = nil
@@ -703,7 +719,7 @@ func (p *parser) NextLine() (err error) {
 				// Give back everything except the whitespace we saw so far,
 				// just in case
 				p.rewind(len(chunk) - offset)
-				return errors.New("non-whitespace found before newline")
+				return errLineNotEmpty
 			}
 		}
 	}
@@ -739,7 +755,7 @@ func (p *parser) CheckEmpty() error {
 	// (begin == size) unless non-whitespace characters were found later in the
 	// data.
 	if p.begin < p.size {
-		return errors.New("simple json: remainder of buffer not empty") // TODO(kent): better error
+		return errBufferNotEmpty
 	}
 	return nil
 }
@@ -774,7 +790,6 @@ func (p *parser) refreshInternal() (buf []byte, err error) {
 	if p.reader == nil {
 		return nil, io.EOF
 	}
-	// TODO(kent): bench between single reads and io.ReadFull
 	p.size, err = io.ReadFull(p.reader, p.readBuf)
 	if p.size > 0 {
 		err = nil
