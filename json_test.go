@@ -210,3 +210,9 @@ func TestControlCharacters(t *testing.T) {
 		assert.ErrorContains(t, err, "simple json: control character, tab, or newline in string value")
 	}
 }
+
+func TestParseObject(t *testing.T) {
+	val, err := UnmarshalObjectString(`    {"a": 1  }  `)
+	require.NoError(t, err)
+	assert.Equal(t, val, map[string]any{"a": int64(1)})
+}

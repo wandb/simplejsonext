@@ -52,6 +52,11 @@ type Parser interface {
 	// and return it. If the data is empty, the exact error io.EOF will be
 	// returned.
 	Parse() (any, error)
+	// ParseObject parses JSON from the front of the contained data as a
+	// simply-typed JSON object and return it. If the JSON is a value of a type
+	// other than object, an error will be returned. If the data is empty, the
+	// exact error io.EOF will be returned.
+	ParseObject() (map[string]any, error)
 	// NextLine consumes whitespace up to the next newline, returning an error
 	// if something other than whitespace exists before the next newline, or
 	// returning the exact error io.EOF if the end of data is found first. This
@@ -67,6 +72,16 @@ type Parser interface {
 	//
 	// See: https://go.dev/wiki/RangefuncExperiment
 	IterLines() func(func(any, error) bool)
+	// IterObjectLines returns a Range-func iterable for reading JSONL,
+	// enforcing that each line must also be a JSON object rather than another
+	// kind of JSON value.
+	//
+	// Returns an iterable go1.22+ RangeFunc that yields each line of a JSONL
+	// until the end of data. If an error occurs, it will be yielded on its own
+	// and iteration will stop.
+	//
+	// See: https://go.dev/wiki/RangefuncExperiment
+	IterObjectLines() func(func(map[string]any, error) bool)
 	// CheckEmpty checks that the remaining data is all whitespace, returning an
 	// error if not.
 	CheckEmpty() error
@@ -556,6 +571,14 @@ func (p *parser) Parse() (val any, err error) {
 	return p.doParse(maxDepth)
 }
 
+func (p *parser) ParseObject() (map[string]any, error) {
+	err := p.skipSpaces()
+	if err != nil {
+		return nil, err
+	}
+	return p.doParseObject(maxDepth)
+}
+
 func (p *parser) doParse(remainingDepth int) (val any, err error) {
 	if remainingDepth < 0 {
 		return nil, errMaxDepth
@@ -622,69 +645,7 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 		}
 		val = arr
 	case objectTy:
-		// TODO(kent): break out parse object and parse array so we can force
-		//  decoding those types specifically since that's often desired
-		// Consume the beginning of the map
-		err = p.consumeObjectBegin()
-		if err != nil {
-			return nil, err
-		}
-		var obj map[string]any
-		for {
-			ty, err = p.parseType()
-			if err != nil {
-				return
-			}
-			if ty == endGroupSym {
-				// Found an ending brace/bracket immediately after the start of
-				// the object or one of its items, cleanly ending the object
-				err = p.consumeObjectEnd()
-				if err != nil {
-					return
-				}
-				break
-			} else if obj == nil {
-				if ty == commaSym {
-					// Found a comma with no previous value
-					return nil, errUnexpectedComma
-				}
-				// Initialize the object's map
-				obj = make(map[string]any)
-			} else {
-				// We just parsed an item and the object hasn't ended. We MUST
-				// find a comma next.
-				err = p.consumeComma()
-				if err != nil {
-					return
-				}
-			}
-			// We now have a regular following item, not an errant comma or the
-			// end of the object.
-			var objKeyBytes []byte
-			var objVal any
-			err = p.skipSpaces()
-			if err != nil {
-				return
-			}
-			// Read the map key, which MUST be a string.
-			objKeyBytes, err = p.parseString()
-			if err != nil {
-				return
-			}
-			objKey := string(objKeyBytes)
-			// Consume the ':' separating the key and value
-			err = p.consumeColon()
-			if err != nil {
-				return
-			}
-			// Read the value, which may be of any type.
-			objVal, err = p.doParse(remainingDepth - 1)
-			if err != nil {
-				return
-			}
-			obj[objKey] = objVal
-		}
-		val = obj
+		val, err = p.doParseObject(remainingDepth)
 	case commaSym:
 		return nil, errUnexpectedComma
 	case endGroupSym:
@@ -694,6 +655,70 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 	}
 	if err != nil {
 		val = nil
+	}
+	return
+}
+
+func (p *parser) doParseObject(remainingDepth int) (obj map[string]any, err error) {
+	// Consume the beginning of the map
+	err = p.consumeObjectBegin()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		var ty valType
+		ty, err = p.parseType()
+		if err != nil {
+			return
+		}
+		if ty == endGroupSym {
+			// Found an ending brace/bracket immediately after the start of
+			// the object or one of its items, cleanly ending the object
+			err = p.consumeObjectEnd()
+			if err != nil {
+				return
+			}
+			break
+		} else if obj == nil {
+			if ty == commaSym {
+				// Found a comma with no previous value
+				return nil, errUnexpectedComma
+			}
+			// Initialize the object's map
+			obj = make(map[string]any)
+		} else {
+			// We just parsed an item and the object hasn't ended. We MUST
+			// find a comma next.
+			err = p.consumeComma()
+			if err != nil {
+				return
+			}
+		}
+		// We now have a regular following item, not an errant comma or the
+		// end of the object.
+		var objKeyBytes []byte
+		var objVal any
+		err = p.skipSpaces()
+		if err != nil {
+			return
+		}
+		// Read the map key, which MUST be a string.
+		objKeyBytes, err = p.parseString()
+		if err != nil {
+			return
+		}
+		objKey := string(objKeyBytes)
+		// Consume the ':' separating the key and value
+		err = p.consumeColon()
+		if err != nil {
+			return
+		}
+		// Read the value, which may be of any type.
+		objVal, err = p.doParse(remainingDepth - 1)
+		if err != nil {
+			return
+		}
+		obj[objKey] = objVal
 	}
 	return
 }
@@ -729,6 +754,27 @@ func (p *parser) IterLines() func(func(any, error) bool) {
 	return func(yield func(any, error) bool) {
 		for {
 			val, err := p.Parse()
+			if err == io.EOF {
+				return
+			}
+			// Stop when we're told to or there's any error
+			if !yield(val, err) || err != nil {
+				return
+			}
+			if err := p.NextLine(); err != nil {
+				if err != io.EOF {
+					yield(nil, err)
+				}
+				return
+			}
+		}
+	}
+}
+
+func (p *parser) IterObjectLines() func(func(map[string]any, error) bool) {
+	return func(yield func(map[string]any, error) bool) {
+		for {
+			val, err := p.ParseObject()
 			if err == io.EOF {
 				return
 			}
