@@ -216,3 +216,13 @@ func TestParseObject(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, val, map[string]any{"a": int64(1)})
 }
+
+func TestWhitespaceSkipping(t *testing.T) {
+	val, err := UnmarshalString(` { "a" : 1 } `)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"a": int64(1)}, val)
+
+	val, err = UnmarshalString(` [ true , false ] `)
+	require.NoError(t, err)
+	assert.Equal(t, []any{true, false}, val)
+}

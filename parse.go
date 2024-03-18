@@ -530,42 +530,6 @@ ReadingChunks:
 	return p.strBuf.Bytes(), nil
 }
 
-func (p *parser) consumeArrayBegin() (err error) {
-	return p.readByte('[')
-}
-
-func (p *parser) consumeArrayEnd() (err error) {
-	if err = p.skipSpaces(); err != nil {
-		return
-	}
-	return p.readByte(']')
-}
-
-func (p *parser) consumeObjectBegin() (err error) {
-	return p.readByte('{')
-}
-
-func (p *parser) consumeObjectEnd() (err error) {
-	if err = p.skipSpaces(); err != nil {
-		return
-	}
-	return p.readByte('}')
-}
-
-func (p *parser) consumeColon() (err error) {
-	if err = p.skipSpaces(); err != nil {
-		return
-	}
-	return p.readByte(':')
-}
-
-func (p *parser) consumeComma() (err error) {
-	if err = p.skipSpaces(); err != nil {
-		return
-	}
-	return p.readByte(',')
-}
-
 func (p *parser) Parse() (val any, err error) {
 	return p.doParse(maxDepth)
 }
@@ -601,55 +565,14 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 		// refer to bytes in the original buffer.
 		val = string(str)
 	case arrayTy:
-		// Consume the opening bracket
-		err = p.consumeArrayBegin()
-		if err != nil {
-			return
-		}
-		var arr []any
-		for {
-			ty, err = p.parseType()
-			if err != nil {
-				return
-			}
-			if ty == endGroupSym {
-				// Found an ending brace/bracket immediately after the start of
-				// the array or one of its values, cleanly ending the array
-				err = p.consumeArrayEnd()
-				if err != nil {
-					return
-				}
-				break
-			} else if len(arr) == 0 {
-				if ty == commaSym {
-					// Found a comma with no previous value
-					return nil, errUnexpectedComma
-				}
-			} else {
-				// We just read a value and the array hasn't ended. We MUST find
-				// a comma next.
-				err = p.consumeComma()
-				if err != nil {
-					return
-				}
-			}
-			// We now have a regular following value, not an errant comma or the
-			// end of the array.
-			var arrVal any
-			arrVal, err = p.doParse(remainingDepth - 1)
-			if err != nil {
-				return
-			}
-			arr = append(arr, arrVal)
-		}
-		val = arr
+		val, err = p.doParseArray(remainingDepth)
 	case objectTy:
 		val, err = p.doParseObject(remainingDepth)
 	case commaSym:
 		return nil, errUnexpectedComma
 	case endGroupSym:
 		return nil, errUnexpectedEnd
-	case unknownTy:
+	default:
 		panic("unreachable")
 	}
 	if err != nil {
@@ -658,9 +581,54 @@ func (p *parser) doParse(remainingDepth int) (val any, err error) {
 	return
 }
 
+func (p *parser) doParseArray(remainingDepth int) (arr []any, err error) {
+	// Consume the opening bracket
+	err = p.readByte('[')
+	if err != nil {
+		return
+	}
+	for {
+		var ty valType
+		ty, err = p.parseType()
+		if err != nil {
+			return
+		}
+		if ty == endGroupSym {
+			// Found an ending brace/bracket immediately after the start of
+			// the array or one of its values, cleanly ending the array
+			err = p.readByte(']')
+			if err != nil {
+				return
+			}
+			break
+		} else if len(arr) == 0 {
+			if ty == commaSym {
+				// Found a comma with no previous value
+				return nil, errUnexpectedComma
+			}
+		} else {
+			// We just read a value and the array hasn't ended. We MUST find
+			// a comma next, and we have already skipped whitespace.
+			err = p.readByte(',')
+			if err != nil {
+				return
+			}
+		}
+		// We now have a regular following value, not an errant comma or the
+		// end of the array.
+		var arrVal any
+		arrVal, err = p.doParse(remainingDepth - 1)
+		if err != nil {
+			return
+		}
+		arr = append(arr, arrVal)
+	}
+	return
+}
+
 func (p *parser) doParseObject(remainingDepth int) (obj map[string]any, err error) {
-	// Consume the beginning of the map
-	err = p.consumeObjectBegin()
+	// Consume the beginning of the object
+	err = p.readByte('{')
 	if err != nil {
 		return nil, err
 	}
@@ -673,7 +641,7 @@ func (p *parser) doParseObject(remainingDepth int) (obj map[string]any, err erro
 		if ty == endGroupSym {
 			// Found an ending brace/bracket immediately after the start of
 			// the object or one of its items, cleanly ending the object
-			err = p.consumeObjectEnd()
+			err = p.readByte('}')
 			if err != nil {
 				return
 			}
@@ -687,8 +655,8 @@ func (p *parser) doParseObject(remainingDepth int) (obj map[string]any, err erro
 			obj = make(map[string]any)
 		} else {
 			// We just parsed an item and the object hasn't ended. We MUST
-			// find a comma next.
-			err = p.consumeComma()
+			// find a comma next, and we have already skipped whitespace.
+			err = p.readByte(',')
 			if err != nil {
 				return
 			}
@@ -708,7 +676,11 @@ func (p *parser) doParseObject(remainingDepth int) (obj map[string]any, err erro
 		}
 		objKey := string(objKeyBytes)
 		// Consume the ':' separating the key and value
-		err = p.consumeColon()
+		err = p.skipSpaces()
+		if err != nil {
+			return
+		}
+		err = p.readByte(':')
 		if err != nil {
 			return
 		}
