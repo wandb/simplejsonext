@@ -1,0 +1,35 @@
+name: "go test"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**/*.go'
+
+jobs:
+  test:
+    name: "go test"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [ '1.21.x', '1.22.x' ]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: "go.sum"
+      - name: "print go version"
+        run: "go version"
+      - name: "install dependencies"
+        run: "go get -t ."
+      - name: "build"
+        run: "go build -v ./..."
+      - name: "tests"
+        run: "go test ./..."
+      - name: "covered tests"
+        run: "go test -coverprofile coverage.out ./..."
