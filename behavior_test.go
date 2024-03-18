@@ -57,10 +57,6 @@ func floatIntEqual(f float64, i int64) bool {
 	return int64(f) == i && f == float64(i)
 }
 
-func float32IntEqual(f float32, i int64) bool {
-	return int64(f) == i && f == float32(i)
-}
-
 // Deep equality for our supported types, with nuances.
 //
 // The only types supported are: nil, bool, string, int64, float64, []any,
@@ -103,24 +99,6 @@ func equalImpl(expected any, actual any, opt options) error {
 			}
 		} else if av, ok := actual.(int64); ok && opt.tolerateFloatToIntRoundTrip {
 			if floatIntEqual(ev, av) {
-				return nil
-			}
-		}
-	case float32:
-		if av, ok := actual.(float32); ok {
-			if math.IsNaN(float64(ev)) && math.IsNaN(float64(av)) {
-				// NaN do not compare equal, but this is the correct outcome
-				return nil
-			} else if ev == 0.0 && av == 0.0 {
-				// zeros must have matching signs
-				if math.Signbit(float64(ev)) == math.Signbit(float64(av)) {
-					return nil
-				}
-			} else if ev == av {
-				return nil
-			}
-		} else if av, ok := actual.(int64); ok && opt.tolerateFloatToIntRoundTrip {
-			if float32IntEqual(ev, av) {
 				return nil
 			}
 		}
