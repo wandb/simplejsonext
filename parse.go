@@ -350,7 +350,6 @@ ReadingChunks:
 		chunk, err = p.take()
 		if err != nil {
 			if err == io.EOF {
-				err = nil
 				view = p.strBuf.Bytes()
 				break ReadingChunks
 			}
