@@ -32,8 +32,6 @@ type Emitter interface {
 	Reset(io.Writer)
 }
 
-// emitter implements a JSON emitter that satisfies the objconv.Emitter
-// interface.
 type emitter struct {
 	w io.Writer
 	s []byte
