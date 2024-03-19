@@ -92,6 +92,10 @@ type Parser interface {
 	UnmarshalFull() (any, error)
 	// Reset the parser with a new io.Reader.
 	Reset(io.Reader)
+	// ResetSlice resets the parser with a new byte slice.
+	ResetSlice([]byte)
+	// ResetString resets the parser with a new string.
+	ResetString(string)
 }
 
 type parser struct {
@@ -142,6 +146,16 @@ func (p *parser) Reset(r io.Reader) {
 func (p *parser) ResetSlice(data []byte) {
 	p.reader = nil
 	p.readBuf = data
+	p.begin = 0
+	p.size = len(data)
+	if p.strBuf.Cap() > oversizedBuffer {
+		p.strBuf = bytes.Buffer{}
+	}
+}
+
+func (p *parser) ResetString(data string) {
+	p.reader = nil
+	p.readBuf = unsafe.Slice(unsafe.StringData(data), len(data))
 	p.begin = 0
 	p.size = len(data)
 	if p.strBuf.Cap() > oversizedBuffer {
