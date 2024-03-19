@@ -309,6 +309,19 @@ var (
 		{"\"\x00\"", errors.New("simple json: control character, tab, or newline in string value")},
 		{nestedArrayJSON(5), nestedArrayValue(5)},
 		{nestedArrayJSON(500), nestedArrayValue(500)},
+		{``, io.EOF},
+		{`   x`, errors.New("simple json: expected token but found 'x'")},
+		{`,`, errors.New("simple json: unexpected comma")},
+		{`[1,,2]`, errors.New("simple json: unexpected comma")},
+		{`{,"a":1}`, errors.New("simple json: unexpected comma")},
+		{`{"a": 1 "b": 2}`, errors.New("simple json: expected ',' but found '\"'")},
+		{`{"a":1,,"b":2}`, errors.New("simple json: expected '\"' but found ','")},
+		{`{"a" 1}`, errors.New("simple json: expected ':' but found '1'")},
+		{`}`, errors.New("simple json: unexpected end of array or object")},
+		{`[1, ]`, errors.New("simple json: unexpected end of array or object")},
+		{`{w`, errors.New("simple json: expected token but found 'w'")},
+		{`{"1": 1]`, errors.New("simple json: expected '}' but found ']'")},
+		{`[1}`, errors.New("simple json: expected ']' but found '}'")},
 	}
 	// Corner cases currently handled only by the standard library
 	standardOnlyCornerCases = []jsonCase{
@@ -327,6 +340,7 @@ var (
 	standardBehaviorForExtCases = []jsonCase{
 		// Numbers are always floating point
 		{`1`, float64(1)},
+		{"\t\n   1\t", float64(1)},
 		{`9223372036854775807`, float64(9223372036854775807)},
 		{`-9223372036854775808`, float64(-9223372036854775808)},
 		// Numbers too large to fit in float64 are errors
@@ -390,6 +404,7 @@ var (
 	simpleCases = []jsonCase{
 		// Numbers should parse as int64 when possible
 		{`1`, int64(1)},
+		{"\t\n   1\t", int64(1)},
 		{`9223372036854775807`, int64(9223372036854775807)},
 		{`-9223372036854775808`, int64(-9223372036854775808)},
 		// Numbers too large to represent in float64 become infinity

@@ -215,6 +215,9 @@ func TestParseObject(t *testing.T) {
 	val, err := UnmarshalObjectString(`    {"a": 1  }  `)
 	require.NoError(t, err)
 	assert.Equal(t, val, map[string]any{"a": int64(1)})
+
+	_, err = UnmarshalObjectString(`1`)
+	assert.ErrorContains(t, err, "simple json: expected '{' but found '1'")
 }
 
 func TestWhitespaceSkipping(t *testing.T) {
