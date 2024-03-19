@@ -76,6 +76,8 @@ func (e *emitter) emitUint(v uint64, _ int) (err error) {
 }
 
 func (e *emitter) emitFloat(v float64, bitSize int) (err error) {
+	// AppendFloat writes NaN the way we want, but spells infinity values as
+	// `+Inf` and `-Inf`, which we don't like as much.
 	if math.IsInf(v, +1) {
 		_, err = e.w.Write([]byte("Infinity"))
 	} else if math.IsInf(v, -1) {
