@@ -229,3 +229,20 @@ func TestWhitespaceSkipping(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []any{true, false}, val)
 }
+
+func TestReflectedEmit(t *testing.T) {
+	res, err := MarshalToString(map[string]map[string]int64{"foo": {"bar": 1}})
+	require.NoError(t, err)
+	assert.Equal(t, `{"foo":{"bar":1}}`, res)
+
+	False, True := false, true
+	res, err = MarshalToString([]*bool{nil, &False, &True})
+	require.NoError(t, err)
+	assert.Equal(t, `[null,false,true]`, res)
+
+	// non-`string` keys are forbidden
+	_, err = MarshalToString(map[int]int{1: 2})
+	assert.ErrorContains(t, err, "simple json: cannot emit unsupported type map[int]int")
+	_, err = MarshalToString([]map[string]map[int]int{{"foo": {1: 2}}})
+	assert.ErrorContains(t, err, "simple json: cannot emit unsupported type map[int]int")
+}

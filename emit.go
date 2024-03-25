@@ -288,9 +288,9 @@ func (e *emitter) Emit(v interface{}) (err error) {
 	case error:
 		return e.emitError(vt)
 	default:
-		rv := reflect.ValueOf(&v)
-		if rv.Type().Elem().Kind() == reflect.Pointer {
-			rp := rv.Elem() // rp is the reflected pointer value of v
+		ty := reflect.TypeOf(vt)
+		if ty.Kind() == reflect.Pointer {
+			rp := reflect.ValueOf(v) // rp is the reflected pointer value of v
 			if rp.IsNil() {
 				// v is a typed nil pointer
 				return e.emitNil()
@@ -298,6 +298,67 @@ func (e *emitter) Emit(v interface{}) (err error) {
 				// v is a non-nil pointer; dereference it and emit that
 				return e.Emit(rp.Elem().Interface())
 			}
+		} else if ty.Kind() == reflect.Slice {
+			// Support non-`any` slices via reflection
+			rv := reflect.ValueOf(v)
+			err = e.emitArrayBegin(0)
+			if err != nil {
+				return
+			}
+			notFirst := false
+			for i := 0; i < rv.Len(); i++ {
+				av := rv.Index(i).Interface()
+				if notFirst {
+					err = e.emitArrayNext()
+					if err != nil {
+						return
+					}
+				}
+				notFirst = true
+				err = e.Emit(av)
+				if err != nil {
+					return
+				}
+			}
+			return e.emitArrayEnd()
+		} else if ty.Kind() == reflect.Map {
+			// Support non-`any`-valued maps via reflection, as long as the key
+			// type is exactly `string`
+			if ty.Key() != reflect.TypeOf("") {
+				return fmt.Errorf("simple json: cannot emit unsupported type %T", v)
+			}
+
+			rv := reflect.ValueOf(v)
+			err = e.emitMapBegin(0)
+			if err != nil {
+				return
+			}
+			notFirst := false
+			iter := rv.MapRange()
+			for iter.Next() {
+				key := iter.Key().String()
+				value := iter.Value().Interface()
+				if notFirst {
+					err = e.emitMapNext()
+					if err != nil {
+						return
+					}
+				}
+				notFirst = true
+				err = e.emitString(key)
+				if err != nil {
+					return
+				}
+				err = e.emitMapValue()
+				if err != nil {
+					return
+				}
+				err = e.Emit(value)
+				if err != nil {
+					return
+				}
+			}
+			return e.emitMapEnd()
 		}
 	}
 	return fmt.Errorf("simple json: cannot emit unsupported type %T", v)
