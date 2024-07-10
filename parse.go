@@ -921,7 +921,7 @@ func stringNoCopy(b []byte) (view string) {
 	if len(b) == 0 {
 		return ""
 	}
-	return unsafe.String(&b[0], len(b))
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
 // []byte("9223372036854775807"), int64_max as text
