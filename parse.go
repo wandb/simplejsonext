@@ -53,7 +53,7 @@ type Parser interface {
 	// returned.
 	Parse() (any, error)
 	// ParseObject parses JSON from the front of the contained data as a
-	// simply-typed JSON object and return it. If the JSON is a value of a type
+	// simply-typed JSON object and returns it. If the JSON is a value of a type
 	// other than object, an error will be returned. If the data is empty, the
 	// exact error io.EOF will be returned.
 	ParseObject() (map[string]any, error)
